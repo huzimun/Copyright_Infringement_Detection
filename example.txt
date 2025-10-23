@@ -1,0 +1,177 @@
+(vla) humw@iti5800-Super-Server:~/Codes/Image_Copy_Detection/Copyright_Infringement_Detection$ python3 courtroom_simulator.py 
+> /data1/humw/Codes/Image_Copy_Detection/Copyright(vla) humw@iti5800-Super-Server:~/Codes/Image_Copy_Detection/Copyright_Infringement_Detection$ python3 courtroom_simulator.py 
+> /data1/humw/Codes/Image_Copy_Detection/Copyright_Infringement_Detection/courtroom_simulator.py(1353)main()
+-> cfg_path = args.cfg_path
+(Pdb) c
+[2025-10-21 10:39:51] Initializing agents
+[2025-10-21 10:39:51] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:51] Loading Qwen2.5-VL model and processor globally...
+Loading checkpoint shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:02<00:00,  1.43s/it]
+The image processor of type `Qwen2VLImageProcessor` is now loaded as a fast processor by default, even if the model checkpoint was saved with a slow processor. This is a breaking change and may produce slightly different outputs. To continue using the slow processor, instantiate this class with `use_fast=False`. Note that this behavior will be extended to all models in a future release.
+[2025-10-21 10:39:55] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:55] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:55] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:55] Starting courtroom simulation
+[2025-10-21 10:39:55] Expert: running abstraction
+[2025-10-21 10:39:55] abstract() called with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg
+[2025-10-21 10:39:55] Calling _abstraction_chat with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg, prompt=Please help decompose the given two imag...
+[2025-10-21 10:40:13] Expert abstraction: Image1: The image depicts a scene from the classic animated film "The Wizard of Oz." It features Dorothy, the Scarecrow, and the Tin Man walking down a yellow brick road towards a large, white castle 
+[2025-10-21 10:40:13] Expert: running filtration
+[2025-10-21 10:40:13] filter() called with abstract_z_zcr=Image1: The image depicts a scene from the classic animated film "The Wizard of Oz." It features Dorothy, the Scarecrow, and the Tin Man walking down a yellow brick road towards a large, white castle with a pointed spire. The landscape is vibrant and colorful, with green rolling hills, a clear blue sky, and a distant mountain range. The characters are dressed in their iconic costumes, with Dorothy in a purple dress, the Scarecrow in a straw hat and overalls, and the Tin Man in a suit. The overall atmosphere is whimsical and magical, typical of the fantasy genre.
+
+Image2: This image shows a group of people walking along a path that appears to be made of sand or a similar material, surrounded by white flowers. The path leads towards a futuristic cityscape in the background, characterized by tall, slender buildings with a modern architectural style. The sky is clear and blue, suggesting a bright and sunny day. The scene has a surreal and dreamlike quality, with the contrast between the natural elements (flowers and sky) and the artificial, futuristic cityscape creating a striking visual effect. The composition focuses on the path and the people, with the city in the distance providing a sense of depth and perspective.
+[2025-10-21 10:40:13] Calling _filtering_chat with abstract_z_zcr=Image1: The image depicts a scene from the classic animated film "The Wizard of Oz." It features Dorothy, the Scarecrow, and the Tin Man walking down a yellow brick road towards a large, white castle with a pointed spire. The landscape is vibrant and colorful, with green rolling hills, a clear blue sky, and a distant mountain range. The characters are dressed in their iconic costumes, with Dorothy in a purple dress, the Scarecrow in a straw hat and overalls, and the Tin Man in a suit. The overall atmosphere is whimsical and magical, typical of the fantasy genre.
+
+Image2: This image shows a group of people walking along a path that appears to be made of sand or a similar material, surrounded by white flowers. The path leads towards a futuristic cityscape in the background, characterized by tall, slender buildings with a modern architectural style. The sky is clear and blue, suggesting a bright and sunny day. The scene has a surreal and dreamlike quality, with the contrast between the natural elements (flowers and sky) and the artificial, futuristic cityscape creating a striking visual effect. The composition focuses on the path and the people, with the city in the distance providing a sense of depth and perspective., prompt=Based on the image decomposition, please...
+[2025-10-21 10:40:18] Expert filtration: Image1 Unique Elements: The characters' costumes, the landscape, the yellow brick road, the white castle, the green rolling hills, the clear blue sky, the distant mountain range, the whimsical and mag
+[2025-10-21 10:40:18] Expert: running comparison
+[2025-10-21 10:40:18] compare() called with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg, prompt=Please assign an overall similarity scor...
+[2025-10-21 10:40:18] Calling _debate_chat with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg, prompt=Please assign an overall similarity scor...
+[2025-10-21 10:40:22] Expert comparison: score=0.7, confidence=0.85
+[2025-10-21 10:40:22] Plaintiff lawyer: generating opening statement
+[2025-10-21 10:40:22] Calling _chat with prompt: You are an experienced copyright lawyer representing the pla...
+[2025-10-21 10:40:29] Defendant lawyer: generating opening statement
+[2025-10-21 10:40:29] Calling _chat with prompt: You are an experienced copyright lawyer representing the def...
+[2025-10-21 10:40:37] --- Round 1 ---
+[2025-10-21 10:40:37] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:40:37] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:40:39] Judge raw output: Action: Question
+Target: Both
+Question: What unique elements in Image 2 differ significantly from those in Image 1?
+[2025-10-21 10:40:39] Judge result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: What unique elements in Image 2 differ significantly from those in Image 1?', 'target': 'Both', 'question': 'What unique elements in Image 2 differ significantly from those in Image 1?'}
+[2025-10-21 10:40:39] Plaintiff lawyer: answering judge question
+[2025-10-21 10:40:39] Calling _chat with prompt: You are a copyright lawyer representing the plaintiff.
+The j...
+[2025-10-21 10:40:42] Defendant lawyer: answering judge question
+[2025-10-21 10:40:42] Calling _chat with prompt: You are a copyright lawyer representing the defendant.
+The j...
+[2025-10-21 10:40:45] --- Round 2 ---
+[2025-10-21 10:40:45] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:40:45] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:40:48] Judge raw output: Action: Question
+Target: Both
+Question: Are the unique elements in Image 2, such as the path made of sand or a similar material, the white flowers, the futuristic cityscape with tall, slender buildings, and the surreal and dreamlike quality, derived from any existing works?
+[2025-10-21 10:40:48] Judge result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: Are the unique elements in Image 2, such as the path made of sand or a similar material, the white flowers, the futuristic cityscape with tall, slender buildings, and the surreal and dreamlike quality, derived from any existing works?', 'target': 'Both', 'question': 'Are the unique elements in Image 2, such as the path made of sand or a similar material, the white flowers, the futuristic cityscape with tall, slender buildings, and the surreal and dreamlike quality, derived from any existing works?'}
+[2025-10-21 10:40:48] Plaintiff lawyer: answering judge question
+[2025-10-21 10:40:48] Calling _chat with prompt: You are a copyright lawyer representing the plaintiff.
+The j...
+[2025-10-21 10:40:52] Defendant lawyer: answering judge question
+[2025-10-21 10:40:52] Calling _chat with prompt: You are a copyright lawyer representing the defendant.
+The j...
+[2025-10-21 10:40:56] --- Round 3 ---
+[2025-10-21 10:40:56] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:40:56] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:40:58] Judge raw output: Action: Question
+Target: Both
+Question: Are there any similarities or borrowings from Image 1 in the unique elements of Image 2?
+[2025-10-21 10:40:58] Judge result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: Are there any similarities or borrowings from Image 1 in the unique elements of Image 2?', 'target': 'Both', 'question': 'Are there any similarities or borrowings from Image 1 in the unique elements of Image 2?'}
+[2025-10-21 10:40:58] Plaintiff lawyer: answering judge question
+[2025-10-21 10:40:58] Calling _chat with prompt: You are a copyright lawyer representing the plaintiff.
+The j...
+[2025-10-21 10:41:02] Defendant lawyer: answering judge question
+[2025-10-21 10:41:02] Calling _chat with prompt: You are a copyright lawyer representing the defendant.
+The j...
+[2025-10-21 10:41:03] Final round question answered — performing one last judge evaluation
+[2025-10-21 10:41:03] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:41:03] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:41:05] Judge raw output: Action: Question
+Target: Both
+Question: Are there any other unique elements in Image 2 that are not present in Image 1?
+[2025-10-21 10:41:05] Judge re-evaluation (final round) result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: Are there any other unique elements in Image 2 that are not present in Image 1?', 'target': 'Both', 'question': 'Are there any other unique elements in Image 2 that are not present in Image 1?'}
+[2025-10-21 10:41:05] Max rounds reached or judge undecided - using expert judgment as tie-breaker
+
+=== FINAL VERDICT ===
+Is infringement: False
+Score: 0.700, Confidence: 0.850
+Reason: Fallback to expert comparison: score=0.700, reason=Both images share elements such as a central path leading towards a destination, a whimsical and magical atmosphere, and a sense of depth and perspective. However, the specific details and context differ significantly, making it unlikely that these images constitute likely copyright infringement._Infringement_Detection/courtroom_simulator.py(1353)main()
+-> cfg_path = args.cfg_path
+(Pdb) c
+[2025-10-21 10:39:51] Initializing agents
+[2025-10-21 10:39:51] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:51] Loading Qwen2.5-VL model and processor globally...
+Loading checkpoint shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:02<00:00,  1.43s/it]
+The image processor of type `Qwen2VLImageProcessor` is now loaded as a fast processor by default, even if the model checkpoint was saved with a slow processor. This is a breaking change and may produce slightly different outputs. To continue using the slow processor, instantiate this class with `use_fast=False`. Note that this behavior will be extended to all models in a future release.
+[2025-10-21 10:39:55] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:55] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:55] Initializing LLMAdapterAgent with agent_type=qwen2.5-vl, mbti=None
+[2025-10-21 10:39:55] Starting courtroom simulation
+[2025-10-21 10:39:55] Expert: running abstraction
+[2025-10-21 10:39:55] abstract() called with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg
+[2025-10-21 10:39:55] Calling _abstraction_chat with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg, prompt=Please help decompose the given two imag...
+[2025-10-21 10:40:13] Expert abstraction: Image1: The image depicts a scene from the classic animated film "The Wizard of Oz." It features Dorothy, the Scarecrow, and the Tin Man walking down a yellow brick road towards a large, white castle 
+[2025-10-21 10:40:13] Expert: running filtration
+[2025-10-21 10:40:13] filter() called with abstract_z_zcr=Image1: The image depicts a scene from the classic animated film "The Wizard of Oz." It features Dorothy, the Scarecrow, and the Tin Man walking down a yellow brick road towards a large, white castle with a pointed spire. The landscape is vibrant and colorful, with green rolling hills, a clear blue sky, and a distant mountain range. The characters are dressed in their iconic costumes, with Dorothy in a purple dress, the Scarecrow in a straw hat and overalls, and the Tin Man in a suit. The overall atmosphere is whimsical and magical, typical of the fantasy genre.
+
+Image2: This image shows a group of people walking along a path that appears to be made of sand or a similar material, surrounded by white flowers. The path leads towards a futuristic cityscape in the background, characterized by tall, slender buildings with a modern architectural style. The sky is clear and blue, suggesting a bright and sunny day. The scene has a surreal and dreamlike quality, with the contrast between the natural elements (flowers and sky) and the artificial, futuristic cityscape creating a striking visual effect. The composition focuses on the path and the people, with the city in the distance providing a sense of depth and perspective.
+[2025-10-21 10:40:13] Calling _filtering_chat with abstract_z_zcr=Image1: The image depicts a scene from the classic animated film "The Wizard of Oz." It features Dorothy, the Scarecrow, and the Tin Man walking down a yellow brick road towards a large, white castle with a pointed spire. The landscape is vibrant and colorful, with green rolling hills, a clear blue sky, and a distant mountain range. The characters are dressed in their iconic costumes, with Dorothy in a purple dress, the Scarecrow in a straw hat and overalls, and the Tin Man in a suit. The overall atmosphere is whimsical and magical, typical of the fantasy genre.
+
+Image2: This image shows a group of people walking along a path that appears to be made of sand or a similar material, surrounded by white flowers. The path leads towards a futuristic cityscape in the background, characterized by tall, slender buildings with a modern architectural style. The sky is clear and blue, suggesting a bright and sunny day. The scene has a surreal and dreamlike quality, with the contrast between the natural elements (flowers and sky) and the artificial, futuristic cityscape creating a striking visual effect. The composition focuses on the path and the people, with the city in the distance providing a sense of depth and perspective., prompt=Based on the image decomposition, please...
+[2025-10-21 10:40:18] Expert filtration: Image1 Unique Elements: The characters' costumes, the landscape, the yellow brick road, the white castle, the green rolling hills, the clear blue sky, the distant mountain range, the whimsical and mag
+[2025-10-21 10:40:18] Expert: running comparison
+[2025-10-21 10:40:18] compare() called with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg, prompt=Please assign an overall similarity scor...
+[2025-10-21 10:40:18] Calling _debate_chat with image_x=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg, image_xcr=/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg, prompt=Please assign an overall similarity scor...
+[2025-10-21 10:40:22] Expert comparison: score=0.7, confidence=0.85
+[2025-10-21 10:40:22] Plaintiff lawyer: generating opening statement
+[2025-10-21 10:40:22] Calling _chat with prompt: You are an experienced copyright lawyer representing the pla...
+[2025-10-21 10:40:29] Defendant lawyer: generating opening statement
+[2025-10-21 10:40:29] Calling _chat with prompt: You are an experienced copyright lawyer representing the def...
+[2025-10-21 10:40:37] --- Round 1 ---
+[2025-10-21 10:40:37] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:40:37] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:40:39] Judge raw output: Action: Question
+Target: Both
+Question: What unique elements in Image 2 differ significantly from those in Image 1?
+[2025-10-21 10:40:39] Judge result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: What unique elements in Image 2 differ significantly from those in Image 1?', 'target': 'Both', 'question': 'What unique elements in Image 2 differ significantly from those in Image 1?'}
+[2025-10-21 10:40:39] Plaintiff lawyer: answering judge question
+[2025-10-21 10:40:39] Calling _chat with prompt: You are a copyright lawyer representing the plaintiff.
+The j...
+[2025-10-21 10:40:42] Defendant lawyer: answering judge question
+[2025-10-21 10:40:42] Calling _chat with prompt: You are a copyright lawyer representing the defendant.
+The j...
+[2025-10-21 10:40:45] --- Round 2 ---
+[2025-10-21 10:40:45] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:40:45] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:40:48] Judge raw output: Action: Question
+Target: Both
+Question: Are the unique elements in Image 2, such as the path made of sand or a similar material, the white flowers, the futuristic cityscape with tall, slender buildings, and the surreal and dreamlike quality, derived from any existing works?
+[2025-10-21 10:40:48] Judge result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: Are the unique elements in Image 2, such as the path made of sand or a similar material, the white flowers, the futuristic cityscape with tall, slender buildings, and the surreal and dreamlike quality, derived from any existing works?', 'target': 'Both', 'question': 'Are the unique elements in Image 2, such as the path made of sand or a similar material, the white flowers, the futuristic cityscape with tall, slender buildings, and the surreal and dreamlike quality, derived from any existing works?'}
+[2025-10-21 10:40:48] Plaintiff lawyer: answering judge question
+[2025-10-21 10:40:48] Calling _chat with prompt: You are a copyright lawyer representing the plaintiff.
+The j...
+[2025-10-21 10:40:52] Defendant lawyer: answering judge question
+[2025-10-21 10:40:52] Calling _chat with prompt: You are a copyright lawyer representing the defendant.
+The j...
+[2025-10-21 10:40:56] --- Round 3 ---
+[2025-10-21 10:40:56] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:40:56] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:40:58] Judge raw output: Action: Question
+Target: Both
+Question: Are there any similarities or borrowings from Image 1 in the unique elements of Image 2?
+[2025-10-21 10:40:58] Judge result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: Are there any similarities or borrowings from Image 1 in the unique elements of Image 2?', 'target': 'Both', 'question': 'Are there any similarities or borrowings from Image 1 in the unique elements of Image 2?'}
+[2025-10-21 10:40:58] Plaintiff lawyer: answering judge question
+[2025-10-21 10:40:58] Calling _chat with prompt: You are a copyright lawyer representing the plaintiff.
+The j...
+[2025-10-21 10:41:02] Defendant lawyer: answering judge question
+[2025-10-21 10:41:02] Calling _chat with prompt: You are a copyright lawyer representing the defendant.
+The j...
+[2025-10-21 10:41:03] Final round question answered — performing one last judge evaluation
+[2025-10-21 10:41:03] Judge: evaluating the round (may verdict or ask question)
+[2025-10-21 10:41:03] Calling _chat with prompt: You are the judge in a copyright infringement case.
+Given th...
+[2025-10-21 10:41:05] Judge raw output: Action: Question
+Target: Both
+Question: Are there any other unique elements in Image 2 that are not present in Image 1?
+[2025-10-21 10:41:05] Judge re-evaluation (final round) result: {'action': 'question', 'raw': 'Action: Question\nTarget: Both\nQuestion: Are there any other unique elements in Image 2 that are not present in Image 1?', 'target': 'Both', 'question': 'Are there any other unique elements in Image 2 that are not present in Image 1?'}
+[2025-10-21 10:41:05] Max rounds reached or judge undecided - using expert judgment as tie-breaker
+
+=== FINAL VERDICT ===
+Is infringement: False
+Score: 0.700, Confidence: 0.850
+Reason: Fallback to expert comparison: score=0.700, reason=Both images share elements such as a central path leading towards a destination, a whimsical and magical atmosphere, and a sense of depth and perspective. However, the specific details and context differ significantly, making it unlikely that these images constitute likely copyright infringement.

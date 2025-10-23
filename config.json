@@ -1,0 +1,23 @@
+{
+    "alpha": 0.1,
+    "gamma": 0.8,
+    "max_rounds": 3,
+    "qwen_endpoint": "http://localhost:8000/v1/chat/completions",
+    "qwen_local_path": "/data1/humw/Pretrains/Qwen/Qwen2.5-VL-3B-Instruct",
+    "temperature": 0.2,
+    "max_tokens": 800,
+    "api_key_env": "OPENAI_API_KEY",
+    "agent_type": "qwen2.5-vl",
+    "meta_mode": "lvlm",
+    "device": "cuda:2",
+    "debate_agent_num": 3,
+    "ablation": "LVLM+",
+    "icl_path": "/data1/humw/Codes/Image_Copy_Detection/My-CopyJudge/in-context_learning.jsonl",
+    "dataset": "safe-mini-D-Rep",
+    "dataset_dir": "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep",
+    "test_set_path": "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/safe_mini_Test.jsonl",
+    "test_label_path": "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/safe_mini_test_labels.json",
+    "social_types": "ISTJ,INTJ,ENTJ",
+    "enable_reflection_summary": true,
+    "single_test": true
+}
