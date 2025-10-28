@@ -16,6 +16,7 @@ Courtroom Simulator 使用视觉-语言大模型（LVLM）完成以下任务：
 - `ExpertAgent`: 运行 AF-C（abstraction → filtration → comparison），并维护专家知识库 `K_e = {'E': [...], 'C': [...]}`（存储可信 AF-C 结果）。提供 `reflect_and_summary()` 将反思写入知识库。
 - `LawyerAgent`: 原告/被告律师，提供 `opening_statement()`、`rebuttal()`、`answer_question()`，并维护律师知识库 `K_l = {'E_l': [...], 'C': [...]}`，以及 `reflect_and_summary()`。
 - `JudgeAgent`: 法官，提供 `evaluate()`（返回 `verdict` 或 `question`）与 `run_trial()`（控制庭审循环、最终决策与回退规则），维护 `K_j = {'E_j': [...], 'C': [...]}` 并实现 `reflect_and_summary()`。
+ - `Court` (新增): 法庭编排器，负责为每次运行创建顶层输出目录、维护每个案例的 `global_history`（包含专家、律师、法官的逐步对话/事件），并在每个案例判决完成后将该案例的 `global_history.json` 与 `final_decision.json` 保存到 `outputs/<run_ts>/<case_id>/`，同时将每个案例的最终判决追加到 `outputs/<run_ts>/final_results.jsonl`（每行一个 JSON），以便中断时能保留已完成案例的结果。
 - `DebateCoordinator` / `MetaJudge` / `CopyJudgeAFC`: 用于多代理辩论、元判决与不同消融实验流程。
 
 流程简述：
@@ -50,6 +51,8 @@ Judge 的 `evaluate()` 使用严格的输出格式（两种 action：`Verdict` �
 - `gamma`: 判定阈值。
 - `max_rounds`: 庭审轮数上限（默认 3）。
 - `judge_confidence_threshold`: 法官做最终判定所需置信度（默认 0.75）。
+ - `enable_reflection_summary`: 单一布尔开关，用于同时控制是否允许代理在案例结束时进行反思与生成简要总结（替代原先的 `enable_reflection` / `enable_summary` 两个开关）。
+ - `single_test`: 如果为 `true`，`main()` 将执行单个演示案例并使用 `Court.run_trial` 保存该案例的 artifacts；否则按 `test_set_path` 批量运行并在每个案例完成后即时写入 `final_results.jsonl`。
 - 数据路径：`dataset_dir`, `test_set_path`, `test_label_path` 等。
 
 示例在仓库 `config.json` 中可见。
@@ -73,11 +76,18 @@ python3 courtroom_simulator.py --cfg_path /path/to/config.json
 python3 courtroom_simulator.py --cfg_path /data1/humw/Codes/Image_Copy_Detection/Copyright_Infringement_Detection/config.json
 ```
 
-运行结果（batch 模式）会输出到 `./outputs/<timestamp>_...` 目录下，包含：
+运行结果（batch 模式）会输出到 `./outputs/<timestamp>_...` 目录下，且每个案例会单独保存到子文件夹中，本次实现将提供两层输出：
 
-- `detailed_results.json`: 每案详细记录（专家输出、最终判决等）；
-- `final_results.json`: 简洁映射 `image_name` → 0/1（是否侵权）；
-- `metrics.txt`: 若提供 `test_label_path`，则计算并写入 TP/TN/FP/FN、Accuracy、Precision、Recall、F1 等指标；否则写明缺少标签文件。
+- Run-level（顶层输出目录）：
+	- `final_results.jsonl` — 追加式 JSONL 文件：每个完成案例会在处理后立即追加一行 JSON（{case_id, score_final, confidence_final, rationale_final, is_infringement, timestamp}），保证在长时间批量运行或中断时不丢失已完成的案例结果。
+	- 运行元信息和其它汇总文件（如 `detailed_results.json` / `final_results.json` 可选汇总）。
+
+- Case-level（每个案例单独子目录 `outputs/<run_ts>/<case_id>/`）：
+	- `global_history.json` — 该案例的逐步对话与事件记录（列表，包含 speaker/role/content/meta 等字段），便于事后审查或用于代理的反思输入。
+	- `final_decision.json` — 该案例的最终判决（score_final, confidence_final, rationale_final, is_infringement, timestamp）。
+	- （可选）代理知识库快照或其他诊断日志。
+
+这使得当批量评估被中断（OOM/重启等）时，已经完成的案例不会丢失；同时 `global_history` 可作为后续训练或 KB 更新的直接输入。
 
 ## 6. 扩展与注意事项
 

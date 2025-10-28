@@ -19,6 +19,7 @@ import json
 import base64
 import random
 import argparse
+import shutil
 from typing import Any, Dict, List, Optional, Tuple
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from datetime import datetime
 # Qwen2.5-VL本地加载
 from PIL import Image
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 import torch
 
@@ -106,13 +108,50 @@ class ExpertAgent:
                 'judgment': {'score': judgment.score, 'confidence': judgment.confidence, 'rationale': judgment.rationale}
             }
             self.K_expert['O'].append(entry)
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Failed to store AF-C output in K_expert['O'] for case {case_id or os.path.basename(image_x)}: {e}")
+            raise
 
         return out
     confidence_final: float
     rationale_final: str
     is_infringement: bool
+
+    def reflect_and_summary(self, case_id: Optional[str] = None, global_history: Optional[List[dict]] = None, final_decision: Optional[FinalDecision] = None) -> str:
+        """Expert reflects using only the full case `global_history` and the `final_decision`.
+
+        Stores a short reflection into K_expert['E_e'] and returns the summary string.
+        """
+        if not self.cfg.get('enable_reflection_summary', True):
+            return ""
+        prompt = (
+            "You are the Expert agent. Given the full dialog/history of the case and the final decision, reflect briefly (2-4 sentences) on which image features and comparisons influenced your judgment and any cautionary notes for future cases.\n\n"
+        )
+        try:
+            if global_history and isinstance(global_history, list):
+                tail = global_history[-12:]
+                prompt += "Recent dialog/events (last few):\n" + json.dumps(tail, ensure_ascii=False, indent=0) + "\n\n"
+        except Exception as e:
+            log(f"Failed to include global_history tail in expert reflect prompt for case {case_id}: {e}")
+            raise
+        try:
+            if final_decision:
+                prompt += f"Final Decision: is_infringement={getattr(final_decision, 'is_infringement', '')}, score={getattr(final_decision, 'score_final', '')}, confidence={getattr(final_decision, 'confidence_final', '')}, rationale={getattr(final_decision, 'rationale_final', '')}\n"
+        except Exception as e:
+            log(f"Failed to include final_decision in expert reflect prompt for case {case_id}: {e}")
+            raise
+        try:
+            summary = self.agent._chat(prompt).strip()
+        except Exception as e:
+            log(f"Expert reflect_and_summary failed: {e}")
+            summary = ""
+        try:
+            next_id = len(self.K_expert['E_e']) + 1
+            self.K_expert['E_e'].append({'case_id': case_id or f'case_{next_id}', 'summary': summary})
+        except Exception as e:
+            log(f"Failed to store expert reflection in K_expert['E_e'] for case {case_id}: {e}")
+            raise
+        return summary
 
 # ======================
 # In-context Learning Utils
@@ -258,6 +297,21 @@ class LLMAdapterAgent(BaseLVLM):
                 timeout=300,  # 设置合理的超时时间
             )
             self.model = self.agent_type
+        elif self.agent_type == "qwen3-vl-thinking":
+            # 全局只加载一次Qwen模型和processor
+            if GLOBAL_QWEN_MODEL is None or GLOBAL_QWEN_PROCESSOR is None:
+                log("Loading Qwen2.5-VL model and processor globally...")
+                GLOBAL_QWEN_MODEL = Qwen3VLForConditionalGeneration.from_pretrained(
+                        cfg["qwen_local_path"],
+                        dtype=torch.bfloat16,
+                        device_map=cfg["device"],
+                    )
+                GLOBAL_QWEN_PROCESSOR = AutoProcessor.from_pretrained(cfg["qwen_local_path"],
+                        dtype=torch.bfloat16,
+                        device_map=cfg["device"],
+                    )
+            self.model = GLOBAL_QWEN_MODEL
+            self.processor = GLOBAL_QWEN_PROCESSOR
         else:
             raise ValueError(f"Unsupported agent_type: {self.agent_type}")
 
@@ -281,7 +335,7 @@ class LLMAdapterAgent(BaseLVLM):
                 max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
-        elif self.agent_type == "qwen2.5-vl":
+        elif self.agent_type == "qwen2.5-vl" or self.agent_type == "qwen3-vl-thinking":
             messages = []
             messages.append({
                 "role": "user",
@@ -299,7 +353,10 @@ class LLMAdapterAgent(BaseLVLM):
                 return_tensors="pt",
             )
             inputs = inputs.to(self.device if torch.cuda.is_available() else "cpu")
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            max_new_tokens = 512
+            if self.agent_type == "qwen3-vl-thinking":
+                max_new_tokens = 2048
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -346,7 +403,7 @@ class LLMAdapterAgent(BaseLVLM):
                     {"type": "text", "text": f"Similarity Score: {score}"}
                 ]
                 messages.append({"role": "user", "content": content})
-            elif self.agent_type == "qwen2.5-vl":
+            elif self.agent_type in ("qwen2.5-vl", "qwen3-vl-thinking"):
                 img1 = Image.open(gen_img).convert("RGB")
                 img2 = Image.open(real_img).convert("RGB")
                 content = [
@@ -385,7 +442,7 @@ class LLMAdapterAgent(BaseLVLM):
                 max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
-        elif self.agent_type == "qwen2.5-vl":
+        elif self.agent_type in ("qwen2.5-vl", "qwen3-vl-thinking"):
             img1 = Image.open(image_x).convert("RGB")
             img2 = Image.open(image_xcr).convert("RGB")
             content = [
@@ -404,7 +461,10 @@ class LLMAdapterAgent(BaseLVLM):
                 return_tensors="pt",
             )
             inputs = inputs.to(self.device if torch.cuda.is_available() else "cpu")
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            max_new_tokens = 512
+            if self.agent_type == "qwen3-vl-thinking":
+                max_new_tokens = 2048
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -456,7 +516,7 @@ class LLMAdapterAgent(BaseLVLM):
                 max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
-        elif self.agent_type == "qwen2.5-vl":
+        elif self.agent_type in ("qwen2.5-vl", "qwen3-vl-thinking"):
             # 一次传入两张图像，prompt不变
             img1 = Image.open(image_x).convert("RGB")
             img2 = Image.open(image_xcr).convert("RGB")
@@ -477,7 +537,10 @@ class LLMAdapterAgent(BaseLVLM):
                 return_tensors="pt",
             )
             inputs = inputs.to(self.device if torch.cuda.is_available() else "cpu")
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            max_new_tokens = 512
+            if self.agent_type == "qwen3-vl-thinking":
+                max_new_tokens = 2048
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -494,6 +557,84 @@ class LLMAdapterAgent(BaseLVLM):
                 {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64_x}"}},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64_xcr}"}},
+            ]
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": content}],
+                stream=False,
+                extra_body={
+                    'enable_thinking': True,
+                    "thinking_budget": 81920
+                }
+            )
+            return completion.choices[0].message.content.strip()
+        else:
+            raise NotImplementedError
+
+    # 专用聊天接口：带两张图像的通用接口（律师等可调用）
+    def _image_chat(self, image_x, image_xcr, prompt):
+        """Generic image+text chat utility for agents that need to see both images and a prompt.
+
+        Returns: string response from the model.
+        """
+        log(f"Calling _image_chat with image_x={image_x}, image_xcr={image_xcr}, prompt={prompt[:40]}...")
+        if self.agent_type == "gpt-4o":
+            with open(image_x, "rb") as f:
+                img_base64_x = base64.b64encode(f.read()).decode("utf-8")
+            with open(image_xcr, "rb") as f:
+                img_base64_xcr = base64.b64encode(f.read()).decode("utf-8")
+            content = [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64_x}"}},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64_xcr}"}},
+                {"type": "text", "text": prompt},
+            ]
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": content}],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+            return response.choices[0].message.content.strip()
+        elif self.agent_type in ("qwen2.5-vl", "qwen3-vl-thinking"):
+            img1 = Image.open(image_x).convert("RGB")
+            img2 = Image.open(image_xcr).convert("RGB")
+            messages = [
+                {"role": "user", "content": [
+                    {"type": "image", "image": img1},
+                    {"type": "image", "image": img2},
+                    {"type": "text", "text": prompt},
+                ]}
+            ]
+            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            image_inputs, video_inputs = process_vision_info(messages)
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
+            inputs = inputs.to(self.device if torch.cuda.is_available() else "cpu")
+            max_new_tokens = 512
+            if self.agent_type == "qwen3-vl-thinking":
+                max_new_tokens = 2048
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
+            generated_ids_trimmed = [
+                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            ]
+            output_text = self.processor.batch_decode(
+                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )
+            return output_text[0]
+        elif self.agent_type == "qwen3-vl-plus" or self.agent_type == "qwen3-vl-plus-2025-09-23":
+            with open(image_x, "rb") as f:
+                img_base64_x = base64.b64encode(f.read()).decode("utf-8")
+            with open(image_xcr, "rb") as f:
+                img_base64_xcr = base64.b64encode(f.read()).decode("utf-8")
+            content = [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64_x}"}},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64_xcr}"}},
+                {"type": "text", "text": prompt},
             ]
             completion = self.client.chat.completions.create(
                 model=self.model,
@@ -531,7 +672,7 @@ class LLMAdapterAgent(BaseLVLM):
                 max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
-        elif self.agent_type == "qwen2.5-vl":
+        elif self.agent_type in ("qwen2.5-vl", "qwen3-vl-thinking"):
             # 本地Qwen2.5-VL文本推理
             messages = [
                 {
@@ -551,7 +692,10 @@ class LLMAdapterAgent(BaseLVLM):
                 return_tensors="pt",
             )
             inputs = inputs.to(self.device if torch.cuda.is_available() else "cpu")
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            max_new_tokens = 512
+            if self.agent_type == "qwen3-vl-thinking":
+                max_new_tokens = 2048
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -602,7 +746,7 @@ class LLMAdapterAgent(BaseLVLM):
                     {"type": "text", "text": f"Similarity Score: {score}"}
                 ]
                 messages.append({"role": "user", "content": content})
-            elif self.agent_type == "qwen2.5-vl":
+            elif self.agent_type in ("qwen2.5-vl", "qwen3-vl-thinking"):
                 img1 = Image.open(gen_img).convert("RGB")
                 img2 = Image.open(real_img).convert("RGB")
                 content = [
@@ -643,7 +787,7 @@ class LLMAdapterAgent(BaseLVLM):
                 max_tokens=self.max_tokens
             )
             return response.choices[0].message.content.strip()
-        elif self.agent_type == "qwen2.5-vl":
+        elif self.agent_type == "qwen2.5-vl" or self.agent_type == "qwen3-vl-thinking":
             img1 = Image.open(image_x).convert("RGB")
             img2 = Image.open(image_xcr).convert("RGB")
             content = [
@@ -662,7 +806,10 @@ class LLMAdapterAgent(BaseLVLM):
                 return_tensors="pt",
             )
             inputs = inputs.to(self.device if torch.cuda.is_available() else "cpu")
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512)
+            max_new_tokens = 512
+            if self.agent_type == "qwen3-vl-thinking":
+                max_new_tokens = 2048
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -721,69 +868,104 @@ class LLMAdapterAgent(BaseLVLM):
 def log(msg: str):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
-class ExpertAgent:
-    """Third-party expert which performs abstraction->filter->compare chain."""
+class Court:
+    """Court orchestrator that maintains per-case global_history and performs atomic saves.
 
-    def __init__(self, cfg: dict):
-        self.agent = LLMAdapterAgent(cfg)
-        # Knowledge store K_e: only store AF-C results that the expert considers "correct".
-        # We treat an expert output as "trusted" when its confidence >= expert_confidence_threshold.
-        # Stored structure: {'E': [ {case_id, abstraction, filtration, judgment_dict} ], 'C': [case_ids]}
+    Usage: create Court(cfg, judge, expert, plaintiff, defendant) and call run_trial for each case.
+    After each case completes, per-case artifacts are saved under outputs/<run_ts>/<case_id>/ and a
+    single-line JSON is appended to final_results.jsonl in the run folder.
+    """
+
+    def __init__(self, cfg: Dict[str, Any], judge: 'JudgeAgent', expert: 'ExpertAgent', plaintiff: 'LawyerAgent', defendant: 'LawyerAgent', run_dir: Optional[str] = None):
         self.cfg = cfg
-        self.K_e = {'E': [], 'C': []}
+        self.judge = judge
+        self.expert = expert
+        self.plaintiff = plaintiff
+        self.defendant = defendant
+        # run_dir may be provided by caller (main); if not, compute here to preserve previous behavior
+        if run_dir:
+            self.run_dir = run_dir
+        else:
+            # create top-level run dir
+            self.ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # include dataset name in the run prefix for easier identification
+            dataset_dir = cfg.get('dataset_dir', '.')
+            dataset_name = cfg.get('dataset_name') or os.path.basename(os.path.normpath(dataset_dir)) or 'dataset'
+            # sanitize dataset_name (replace os.sep and spaces)
+            dataset_name = dataset_name.replace(os.sep, '_').replace(' ', '_')
+            prefix = f"dataset-{dataset_name}_courtroom-agent_type-{cfg.get('agent_type','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
+            self.run_dir = os.path.join('./outputs', f"{self.ts}_{prefix}")
+            os.makedirs(self.run_dir, exist_ok=True)
+        # ensure run dir exists
+        os.makedirs(self.run_dir, exist_ok=True)
+        self.jsonl_path = os.path.join(self.run_dir, 'final_results.jsonl')
 
-    def analyze(self, image_x: str, image_xcr: str, human_refs: Optional[List[tuple]] = None, case_id: Optional[str] = None):
-        """Run abstraction, filtration and comparison. Return dict with outputs."""
-        log("Expert: running abstraction")
-        abstraction = self.agent.abstract(image_x, image_xcr, PromptTemplates.ABSTRACTION)
-        log(f"Expert abstraction: {abstraction[:200]}")
-        log("Expert: running filtration")
-        filtration = self.agent.filter(abstraction, PromptTemplates.FILTRATION)
-        log(f"Expert filtration: {filtration[:200]}")
-        log("Expert: running comparison")
-        judgment = self.agent.compare(image_x, image_xcr, filtration, PromptTemplates.COMPARISON, human_refs)
-        log(f"Expert comparison: score={judgment.score}, confidence={judgment.confidence}")
-        out = {
-            'abstraction': abstraction,
-            'filtration': filtration,
-            'judgment': judgment,
-        }
+    def run_trial(self, image_x: str, image_xcr: str, human_refs: Optional[List[tuple]] = None, expert_outputs: Optional[dict] = None) -> FinalDecision:
+        """Run a trial and persist per-case artifacts atomically.
 
-        return out
-
-    def reflect_and_summary(self, case_id: Optional[str] = None, expert_outputs: Optional[dict] = None, final_decision: Optional[FinalDecision] = None) -> str:
-        """Have the expert agent reflect on its past AF-C result and produce a short summary.
-
-        The summary is appended into K_e['E'] as a lightweight 'reflection' field when possible.
-        Returns the summary string.
+        Returns the FinalDecision object.
         """
-        expert_outputs = expert_outputs or {}
-        case_id = case_id or (expert_outputs.get('case_id') if isinstance(expert_outputs, dict) else None)
-        prompt = (
-            "You are the Expert agent. Reflect on your recent abstraction/filtration/comparison outputs.\n"
-            "Provide a concise summary (2-4 sentences) of what features you considered decisive and any lessons learned for future cases.\n"
-            "Respond in plain text.\n\n"
-            f"Abstraction:\n{expert_outputs.get('abstraction','')}\n\n"
-            f"Filtration:\n{expert_outputs.get('filtration','')}\n\n"
-            f"Comparison (score/conf/rationale):\n{getattr(expert_outputs.get('judgment'), 'score', '')} / {getattr(expert_outputs.get('judgment'), 'confidence', '')} / {getattr(expert_outputs.get('judgment'), 'rationale', '')}\n\n"
-        )
+        human_refs = human_refs or []
+        # prepare case id
+        case_id = os.path.splitext(os.path.basename(image_x))[0]
+        # ensure expert outputs computed
+        if expert_outputs is None:
+            expert_outputs = self.expert.analyze(image_x, image_xcr, human_refs, case_id=case_id)
+        expert_outputs.setdefault('case_id', case_id)
+
+        # per-case global history list
+        global_history: List[Dict[str, Any]] = []
+        # attach expert output as first entry
         try:
-            summary = self.agent._chat(prompt).strip()
+            global_history.append({'speaker': 'expert', 'role': 'expert', 'content': {
+                'abstraction': expert_outputs.get('abstraction'),
+                'filtration': expert_outputs.get('filtration'),
+                'judgment': {
+                    'score': getattr(expert_outputs.get('judgment'), 'score', None),
+                    'confidence': getattr(expert_outputs.get('judgment'), 'confidence', None),
+                    'rationale': getattr(expert_outputs.get('judgment'), 'rationale', None),
+                }
+            }})
         except Exception as e:
-            log(f"Expert reflect_and_summary failed: {e}")
-            summary = ""
+            log(f"Failed to attach expert output to global_history for case {case_id}: {e}")
+            raise
 
-        # store lightweight reflection alongside the last stored entry if exists
+        # call judge.run_trial which now accepts global_history and will append intermediate events
+        final = self.judge.run_trial(image_x, image_xcr, self.expert, self.plaintiff, self.defendant, human_refs=human_refs, expert_outputs=expert_outputs, global_history=global_history)
+
+        # After trial ends, persist per-case artifacts
+        case_dir = os.path.join(self.run_dir, case_id)
+        os.makedirs(case_dir, exist_ok=True)
+        # save global_history
         try:
-            if self.K_e['E'] and case_id:
-                for e in reversed(self.K_e['E']):
-                    if e.get('case_id') == case_id:
-                        e.setdefault('reflections', []).append(summary)
-                        break
-        except Exception:
-            pass
+            with open(os.path.join(case_dir, 'global_history.json'), 'w', encoding='utf-8') as fh:
+                json.dump(global_history, fh, indent=2, ensure_ascii=False)
+        except Exception as e:
+            log(f"Failed to save global_history for {case_id}: {e}")
 
-        return summary
+        # save final decision
+        try:
+            final_dict = {
+                'score_final': final.score_final,
+                'confidence_final': final.confidence_final,
+                'rationale_final': final.rationale_final,
+                'is_infringement': final.is_infringement,
+                'case_id': case_id,
+                'timestamp': datetime.now().isoformat(),
+            }
+            with open(os.path.join(case_dir, 'final_decision.json'), 'w', encoding='utf-8') as fh:
+                json.dump(final_dict, fh, indent=2, ensure_ascii=False)
+        except Exception as e:
+            log(f"Failed to save final decision for {case_id}: {e}")
+
+        # append to run-level jsonl
+        try:
+            with open(self.jsonl_path, 'a', encoding='utf-8') as fj:
+                fj.write(json.dumps({'case_id': case_id, 'score_final': final.score_final, 'confidence_final': final.confidence_final, 'rationale_final': final.rationale_final, 'is_infringement': final.is_infringement, 'timestamp': datetime.now().isoformat()} , ensure_ascii=False) + "\n")
+        except Exception as e:
+            log(f"Failed to append final result for {case_id} to jsonl: {e}")
+
+        return final
 
 
 class LawyerAgent:
@@ -820,21 +1002,22 @@ class LawyerAgent:
         if case_id not in self.K_l['C']:
             self.K_l['C'].append({'case_id': case_id, 'summary': case_summary})
 
-    def opening_statement(self, expert_outputs: dict) -> str:
+    def opening_statement(self, expert_outputs: dict, gen_image: str, real_image: str) -> str:
+        """Produce an opening statement. Includes both images so the lawyer can reference visual evidence."""
         template = (
             "You are an experienced copyright lawyer representing the {role}.\n"
-            "Based on the Expert's analysis below, produce a concise opening statement (2-5 sentences).\n"
-            "Focus on legal relevance and persuasive points.\n\n"
+            "Based on the Expert's analysis below and the two images provided, produce a concise opening statement (2-5 sentences).\n"
+            "Focus on legal relevance and persuasive points and, if useful, reference visible elements from the images.\n\n"
             "Expert Abstraction:\n{abstraction}\n\n"
             "Expert Filtration:\n{filtration}\n\n"
             "Expert Judgment:\nScore={score:.3f}, Confidence={conf:.3f}\n"
         )
         prompt = template.format(
             role=self.role,
-            abstraction=expert_outputs['abstraction'],
-            filtration=expert_outputs['filtration'],
-            score=expert_outputs['judgment'].score,
-            conf=expert_outputs['judgment'].confidence,
+            abstraction=expert_outputs.get('abstraction', ''),
+            filtration=expert_outputs.get('filtration', ''),
+            score=getattr(expert_outputs.get('judgment'), 'score', 0.0),
+            conf=getattr(expert_outputs.get('judgment'), 'confidence', 0.0),
         )
         # steer plaintiff to emphasize infringement, defendant to emphasize non-infringement
         if self.role == 'plaintiff':
@@ -842,63 +1025,84 @@ class LawyerAgent:
         else:
             prompt += "\nYour goal: emphasize differences and lawful/independent creation to rebut infringement claims."
 
-        log(f"{self.role.capitalize()} lawyer: generating opening statement")
-        out = self.agent._chat(prompt)
+        log(f"{self.role.capitalize()} lawyer: generating opening statement with images")
+        out = self.agent._image_chat(gen_image, real_image, prompt)
         return out.strip()
 
-    def rebuttal(self, expert_outputs: dict, opponent_statement: str, judge_feedback: Optional[str] = None) -> str:
+    def rebuttal(self, expert_outputs: dict, opponent_statement: str, gen_image: str, real_image: str, judge_feedback: Optional[str] = None) -> str:
+        """Produce a rebuttal that can reference both images."""
         template = (
             "You are a copyright lawyer (role={role}).\n"
             "Opponent said:\n{opponent}\n\n"
+            "Expert Abstraction:\n{abstraction}\n\n"
             "Expert Filtration:\n{filtration}\n\n"
-            "Provide a rebuttal (2-4 sentences), focusing on legal counter-arguments and evidence."
+            "Expert Judgment:\nScore={score:.3f}, Confidence={conf:.3f}\n"
+            "Provide a rebuttal (2-4 sentences), focusing on legal counter-arguments and image evidence if relevant."
         )
         prompt = template.format(
             role=self.role,
             opponent=opponent_statement,
-            filtration=expert_outputs['filtration'],
+            abstraction=expert_outputs.get('abstraction', ''),
+            filtration=expert_outputs.get('filtration', ''),
+            score=getattr(expert_outputs.get('judgment'), 'score', 0.0),
+            conf=getattr(expert_outputs.get('judgment'), 'confidence', 0.0),
         )
         if judge_feedback:
             prompt += f"\nJudge asked: {judge_feedback}\nRespond to the judge's concern."
 
-        log(f"{self.role.capitalize()} lawyer: generating rebuttal")
-        out = self.agent._chat(prompt)
+        log(f"{self.role.capitalize()} lawyer: generating rebuttal with images")
+        out = self.agent._image_chat(gen_image, real_image, prompt)
         return out.strip()
 
-    def answer_question(self, question: str, expert_outputs: dict, opponent_statement: Optional[str] = None) -> str:
-        """Answer a judge's concise question. Return a short (1-3 sentence) reply."""
+    def answer_question(self, question: str, expert_outputs: dict, gen_image: str, real_image: str, opponent_statement: Optional[str] = None) -> str:
+        """Answer a judge's concise question. Includes both images so the lawyer can reference visual evidence. Return a short (1-3 sentence) reply."""
         template = (
             "You are a copyright lawyer representing the {role}.\n"
             "The judge asked the following question: \n{question}\n\n"
             "Based on the Expert's filtration and your client's position, answer concisely (1-3 sentences)."\
             " If relevant, cite which unique elements or differences support your answer.\n\n"
+            "Expert Abstraction:\n{abstraction}\n\n"
             "Expert Filtration:\n{filtration}\n\n"
+            "Expert Judgment:\nScore={score:.3f}, Confidence={conf:.3f}\n"
             "Opponent Statement (if available):\n{opponent}\n"
         )
         prompt = template.format(
             role=self.role,
             question=question,
-            filtration=expert_outputs['filtration'],
+            abstraction=expert_outputs.get('abstraction', ''),
+            filtration=expert_outputs.get('filtration', ''),
+            score=getattr(expert_outputs.get('judgment'), 'score', 0.0),
+            conf=getattr(expert_outputs.get('judgment'), 'confidence', 0.0),
             opponent=(opponent_statement or "None"),
         )
-        log(f"{self.role.capitalize()} lawyer: answering judge question")
-        out = self.agent._chat(prompt)
+        log(f"{self.role.capitalize()} lawyer: answering judge question with images")
+        out = self.agent._image_chat(gen_image, real_image, prompt)
         return out.strip()
 
-    def reflect_and_summary(self, case_id: Optional[str] = None, expert_outputs: Optional[dict] = None, judge_question: Optional[str] = None, final_decision: Optional[FinalDecision] = None) -> str:
-        """Lawyer reflects on the case and stores a concise experience summary into K_l['E_l'].
+    def reflect_and_summary(self, case_id: Optional[str] = None, global_history: Optional[List[dict]] = None, final_decision: Optional[FinalDecision] = None) -> str:
+        """Lawyer reflects on the case using only the full-case `global_history` and the `final_decision`.
 
-        Returns the summary string.
+        Stores a concise experience summary into K_l['E_l'] and returns it.
         """
-        expert_outputs = expert_outputs or {}
-        case_id = case_id or (expert_outputs.get('case_id') if isinstance(expert_outputs, dict) else None)
+        if not self.cfg.get('enable_reflection_summary', True):
+            return ""
         prompt = (
             f"You are a senior copyright lawyer representing the {self.role}.\n"
-            "Reflect briefly (2-3 sentences) on what arguments were most persuasive, any weak points, and one recommendation for future similar cases.\n\n"
-            f"Expert Filtration:\n{expert_outputs.get('filtration','')}\n\n"
-            f"Opponent Statement (if any):\n{opponent_statement if (opponent_statement := (expert_outputs.get('opponent') if isinstance(expert_outputs, dict) else None)) else ''}\n\n"
-            f"Final Decision (if any):\n{getattr(final_decision, 'rationale_final', '')}\n"
+            "Reflect briefly (2-3 sentences) on which arguments across the full-case dialog were most persuasive, any weak points, and one recommendation for future similar cases.\n\n"
         )
+        try:
+            if global_history and isinstance(global_history, list):
+                tail = global_history[-12:]
+                prompt += "Recent dialog/events (last few):\n" + json.dumps(tail, ensure_ascii=False, indent=0) + "\n\n"
+        except Exception as e:
+            log(f"Failed to include global_history tail in lawyer reflect prompt for case {case_id}: {e}")
+            raise
+        try:
+            if final_decision:
+                prompt += f"Final Decision: is_infringement={getattr(final_decision, 'is_infringement', '')}, score={getattr(final_decision, 'score_final', '')}, confidence={getattr(final_decision, 'confidence_final', '')}, rationale={getattr(final_decision, 'rationale_final', '')}\n"
+        except Exception as e:
+            log(f"Failed to include final_decision in lawyer reflect prompt for case {case_id}: {e}")
+            raise
         try:
             summary = self.agent._chat(prompt).strip()
         except Exception as e:
@@ -910,8 +1114,9 @@ class LawyerAgent:
             self.K_l['E_l'].append({'case_id': case_id or f'case_{len(self.K_l["E_l"]) + 1}', 'summary': summary})
             if case_id and case_id not in self.K_l['C']:
                 self.K_l['C'].append(case_id)
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Failed to store lawyer reflection in K_l for {self.role} case {case_id}: {e}")
+            raise
         return summary
 
 
@@ -923,8 +1128,8 @@ class JudgeAgent:
         self.confidence_threshold = cfg.get('judge_confidence_threshold', 0.75)
         self.max_rounds = cfg.get('max_rounds', 3)
         self.gamma = cfg.get('gamma', 0.5)
-        self.enable_reflection = cfg.get('enable_reflection', True)
-        self.enable_summary = cfg.get('enable_summary', True)
+        # single flag controlling reflection+summary behavior
+        self.enable_reflection_summary = cfg.get('enable_reflection_summary', True)
         # Judge knowledge store K_j = {E_j, C}
         self.K_j = {'E_j': [], 'C': []}
         self.cfg = cfg
@@ -954,7 +1159,7 @@ class JudgeAgent:
         if case_id not in self.K_j['C']:
             self.K_j['C'].append({'case_id': case_id, 'summary': case_summary})
 
-    def evaluate(self, expert_outputs: dict, plaintiff_stmt: str, defendant_stmt: str) -> dict:
+    def evaluate(self, image_x: str, image_xcr: str, expert_outputs: dict, plaintiff_stmt: str, defendant_stmt: str) -> dict:
         """Ask the judge-agent to evaluate arguments and either (A) issue a final verdict or (B) ask a concise question to one party.
 
         The agent MUST respond in one of the two strict formats (examples included):
@@ -972,7 +1177,7 @@ class JudgeAgent:
         """
         prompt = (
             "You are the judge in a copyright infringement case.\n"
-            "Given the expert analysis, the plaintiff's and defendant's statements, you must either: \n"
+            "Given the accused image, the copyrighted image, the expert analysis, the plaintiff's and defendant's statements, you must either: \n"
             "  - Issue a final verdict (Infringement or Not Infringement) with a confidence score, OR\n"
             "  - Ask a single concise clarifying question directed to the Plaintiff or the Defendant (or Both) that will help you reach a decision.\n\n"
             "OUTPUT STRICT FORMAT (one of the two):\n"
@@ -985,11 +1190,17 @@ class JudgeAgent:
             "   Question: [text]\n\n"
             "Expert Filtration:\n{filtration}\n\n"
             "Plaintiff Statement:\n{plaintiff}\n\n"
-            "Defendant Statement:\n{defendant}\n"
-        ).format(filtration=expert_outputs['filtration'], plaintiff=plaintiff_stmt, defendant=defendant_stmt)
+            "Defendant Statement:\n{defendant}\n\n"
+            "(Image paths: Accused={image_x}, Copyrighted={image_xcr})\n"
+        ).format(filtration=expert_outputs['filtration'], plaintiff=plaintiff_stmt, defendant=defendant_stmt, image_x=image_x, image_xcr=image_xcr)
 
         log("Judge: evaluating the round (may verdict or ask question)")
-        out = self.agent._chat(prompt)
+        # Use image-aware chat so the judge can reference visual evidence when evaluating
+        try:
+            out = self.agent._image_chat(image_x, image_xcr, prompt)
+        except Exception:
+            # fallback to text-only chat if image chat fails
+            out = self.agent._chat(prompt)
         log(f"Judge raw output: {out[:800]}")
 
         # parsing
@@ -1034,7 +1245,7 @@ class JudgeAgent:
         except Exception:
             return result
 
-    def run_trial(self, image_x: str, image_xcr: str, expert: ExpertAgent, plaintiff: LawyerAgent, defendant: LawyerAgent, human_refs: Optional[List[tuple]] = None, expert_outputs: Optional[dict] = None):
+    def run_trial(self, image_x: str, image_xcr: str, expert: ExpertAgent, plaintiff: LawyerAgent, defendant: LawyerAgent, human_refs: Optional[List[tuple]] = None, expert_outputs: Optional[dict] = None, global_history: Optional[List[dict]] = None):
         """
         Run a single trial.
 
@@ -1048,6 +1259,9 @@ class JudgeAgent:
         is useful for batch runners that want to save or reuse expert outputs without double computation.
         """
         human_refs = human_refs or []
+        # ensure we have a global_history to append to
+        if global_history is None:
+            global_history = []
         if expert_outputs is None:
             expert_outputs = expert.analyze(image_x, image_xcr, human_refs)
 
@@ -1055,18 +1269,32 @@ class JudgeAgent:
         case_id = os.path.splitext(os.path.basename(image_x))[0]
         try:
             expert_outputs.setdefault('case_id', case_id)
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Failed to set default case_id in expert_outputs for case {case_id}: {e}")
+            raise
 
-        # Opening statements
-        plaintiff_stmt = plaintiff.opening_statement(expert_outputs)
-        defendant_stmt = defendant.opening_statement(expert_outputs)
+        # Opening statements (pass image paths so lawyers can reference them)
+        plaintiff_stmt = plaintiff.opening_statement(expert_outputs, image_x, image_xcr)
+        defendant_stmt = defendant.opening_statement(expert_outputs, image_x, image_xcr)
+        # record into global history
+        try:
+            global_history.append({'speaker': 'plaintiff', 'role': 'plaintiff', 'content': plaintiff_stmt})
+            global_history.append({'speaker': 'defendant', 'role': 'defendant', 'content': defendant_stmt})
+        except Exception as e:
+            log(f"Failed to append opening statements to global_history for case {case_id}: {e}")
+            raise
 
         # Judge evaluates
         for round_idx in range(1, self.max_rounds + 1):
             log(f"--- Round {round_idx} ---")
-            result = self.evaluate(expert_outputs, plaintiff_stmt, defendant_stmt)
+            result = self.evaluate(image_x, image_xcr, expert_outputs, plaintiff_stmt, defendant_stmt)
             log(f"Judge result: {result}")
+            # append judge output to history
+            try:
+                global_history.append({'speaker': 'judge', 'role': 'judge', 'content': result})
+            except Exception as e:
+                log(f"Failed to append judge output to global_history for case {case_id}, round {round_idx}: {e}")
+                raise
 
             if result.get('action') == 'verdict':
                 v = result['verdict']
@@ -1080,21 +1308,40 @@ class JudgeAgent:
                                          is_infringement=is_infringement)
                     # Let agents reflect and store experience before returning
                     try:
-                        plaintiff.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                        defendant.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                        expert.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                        self.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                    except Exception:
-                        pass
+                        # provide global_history as part of expert_outputs for backward compatibility
+                        plaintiff.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                        defendant.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                        expert.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                        self.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                    except Exception as e:
+                        log(f"Agent reflection failed during finalization for case {case_id}: {e}")
+                        raise
+                    # append final decision
+                    try:
+                        global_history.append({'speaker': 'judge', 'role': 'judge', 'content': {'final_decision': {'score_final': final.score_final, 'confidence_final': final.confidence_final, 'rationale_final': final.rationale_final, 'is_infringement': final.is_infringement}}})
+                    except Exception as e:
+                        log(f"Failed to append final decision to global_history for case {case_id}: {e}")
+                        raise
                     return final
                 # low confidence - treat as undecided and allow rebuttal
                 judge_feedback = f"Round {round_idx} feedback: {reason[:300]}"
-                plaintiff_stmt = plaintiff.rebuttal(expert_outputs, defendant_stmt, judge_feedback)
-                defendant_stmt = defendant.rebuttal(expert_outputs, plaintiff_stmt, judge_feedback)
+                plaintiff_stmt = plaintiff.rebuttal(expert_outputs, defendant_stmt, image_x, image_xcr, judge_feedback)
+                # record rebuttal
+                try:
+                    global_history.append({'speaker': 'plaintiff', 'role': 'plaintiff', 'content': plaintiff_stmt, 'meta': {'round': round_idx, 'type': 'rebuttal'}})
+                except Exception as e:
+                    log(f"Failed to append plaintiff rebuttal to global_history for case {case_id}, round {round_idx}: {e}")
+                    raise
+                defendant_stmt = defendant.rebuttal(expert_outputs, plaintiff_stmt, image_x, image_xcr, judge_feedback)
+                try:
+                    global_history.append({'speaker': 'defendant', 'role': 'defendant', 'content': defendant_stmt, 'meta': {'round': round_idx, 'type': 'rebuttal'}})
+                except Exception as e:
+                    log(f"Failed to append defendant rebuttal to global_history for case {case_id}, round {round_idx}: {e}")
+                    raise
                 # If this was the final allowed round, let the judge re-evaluate once more
                 if round_idx == self.max_rounds:
                     log("Final round rebuttal submitted — performing one last judge evaluation")
-                    final_eval = self.evaluate(expert_outputs, plaintiff_stmt, defendant_stmt)
+                    final_eval = self.evaluate(image_x, image_xcr, expert_outputs, plaintiff_stmt, defendant_stmt)
                     log(f"Judge re-evaluation (final round) result: {final_eval}")
                     if final_eval.get('action') == 'verdict':
                         v2 = final_eval.get('verdict')
@@ -1107,12 +1354,17 @@ class JudgeAgent:
                                                  rationale_final=r2,
                                                  is_infringement=is_infringement)
                             try:
-                                plaintiff.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                defendant.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                expert.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                self.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
+                                plaintiff.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                defendant.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                expert.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                self.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
                             except Exception:
-                                pass
+                                raise Exception("Final round judge evaluation produced invalid verdict")
+                            try:
+                                global_history.append({'speaker': 'judge', 'role': 'judge', 'content': {'final_decision': {'score_final': final.score_final, 'confidence_final': final.confidence_final, 'rationale_final': final.rationale_final, 'is_infringement': final.is_infringement}}})
+                            except Exception as e:
+                                log(f"Failed to append final decision to global_history after final round for case {case_id}: {e}")
+                                raise
                             return final
 
             elif result.get('action') == 'question':
@@ -1122,17 +1374,27 @@ class JudgeAgent:
                 plaintiff_answer = None
                 defendant_answer = None
                 if target in ('plaintiff', 'both'):
-                    plaintiff_answer = plaintiff.answer_question(question, expert_outputs, opponent_statement=defendant_stmt)
+                    plaintiff_answer = plaintiff.answer_question(question, expert_outputs, image_x, image_xcr, opponent_statement=defendant_stmt)
                     # update plaintiff statement to the answer (short answer becomes the plaintiff's latest statement)
                     plaintiff_stmt = plaintiff_answer
+                    try:
+                        global_history.append({'speaker': 'plaintiff', 'role': 'plaintiff', 'content': plaintiff_answer, 'meta': {'round': round_idx, 'type': 'answer'}})
+                    except Exception as e:
+                        log(f"Failed to append plaintiff answer to global_history for case {case_id}, round {round_idx}: {e}")
+                        raise
                 if target in ('defendant', 'both'):
-                    defendant_answer = defendant.answer_question(question, expert_outputs, opponent_statement=plaintiff_stmt)
+                    defendant_answer = defendant.answer_question(question, expert_outputs, image_x, image_xcr, opponent_statement=plaintiff_stmt)
                     defendant_stmt = defendant_answer
+                    try:
+                        global_history.append({'speaker': 'defendant', 'role': 'defendant', 'content': defendant_answer, 'meta': {'round': round_idx, 'type': 'answer'}})
+                    except Exception as e:
+                        log(f"Failed to append defendant answer to global_history for case {case_id}, round {round_idx}: {e}")
+                        raise
                 # After answers, judge will re-evaluate in next loop iteration (counts as one round)
                 # If this was the final allowed round, perform one immediate re-evaluation so the judge can decide
                 if round_idx == self.max_rounds:
                     log("Final round question answered — performing one last judge evaluation")
-                    final_eval = self.evaluate(expert_outputs, plaintiff_stmt, defendant_stmt)
+                    final_eval = self.evaluate(image_x, image_xcr, expert_outputs, plaintiff_stmt, defendant_stmt)
                     log(f"Judge re-evaluation (final round) result: {final_eval}")
                     if final_eval.get('action') == 'verdict':
                         v2 = final_eval.get('verdict')
@@ -1145,23 +1407,28 @@ class JudgeAgent:
                                                  rationale_final=r2,
                                                  is_infringement=is_infringement)
                             try:
-                                plaintiff.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                defendant.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                expert.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                self.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
+                                plaintiff.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                defendant.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                expert.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                self.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
                             except Exception:
-                                pass
+                                raise Exception("Final round judge evaluation produced invalid verdict")
+                            try:
+                                global_history.append({'speaker': 'judge', 'role': 'judge', 'content': {'final_decision': {'score_final': final.score_final, 'confidence_final': final.confidence_final, 'rationale_final': final.rationale_final, 'is_infringement': final.is_infringement}}})
+                            except Exception as e:
+                                log(f"Failed to append final decision to global_history after final round for case {case_id}, round {round_idx}: {e}")
+                                raise
                             return final
 
             else:
                 # fallback: if judge didn't produce an actionable output, let lawyers rebut once
                 judge_feedback = f"Round {round_idx} feedback: {result.get('raw', '')[:300]}"
-                plaintiff_stmt = plaintiff.rebuttal(expert_outputs, defendant_stmt, judge_feedback)
-                defendant_stmt = defendant.rebuttal(expert_outputs, plaintiff_stmt, judge_feedback)
+                plaintiff_stmt = plaintiff.rebuttal(expert_outputs, defendant_stmt, image_x, image_xcr, judge_feedback)
+                defendant_stmt = defendant.rebuttal(expert_outputs, plaintiff_stmt, image_x, image_xcr, judge_feedback)
                 # If this was the final round, perform one final evaluation after rebuttals
                 if round_idx == self.max_rounds:
                     log("Final round fallback rebuttal submitted — performing one last judge evaluation")
-                    final_eval = self.evaluate(expert_outputs, plaintiff_stmt, defendant_stmt)
+                    final_eval = self.evaluate(image_x, image_xcr, expert_outputs, plaintiff_stmt, defendant_stmt)
                     log(f"Judge re-evaluation (final round) result: {final_eval}")
                     if final_eval.get('action') == 'verdict':
                         v2 = final_eval.get('verdict')
@@ -1174,12 +1441,12 @@ class JudgeAgent:
                                                  rationale_final=r2,
                                                  is_infringement=is_infringement)
                             try:
-                                plaintiff.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                defendant.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                expert.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-                                self.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
+                                plaintiff.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                defendant.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                expert.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+                                self.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
                             except Exception:
-                                pass
+                                raise Exception("Final round judge evaluation produced invalid verdict")
                             return final
 
         # After max rounds, fallback to expert judgment or aggregate
@@ -1192,47 +1459,58 @@ class JudgeAgent:
                              is_infringement=is_infr)
         # Ask agents to reflect and store this outcome
         try:
-            plaintiff.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-            defendant.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-            expert.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
-            self.reflect_and_summary(case_id=case_id, expert_outputs=expert_outputs, final_decision=final)
+            plaintiff.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+            defendant.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+            expert.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
+            self.reflect_and_summary(case_id=case_id, global_history=global_history, final_decision=final)
         except Exception:
-            pass
+            raise Exception("Final round judge evaluation produced invalid verdict")
+        try:
+            global_history.append({'speaker': 'judge', 'role': 'judge', 'content': {'final_decision': {'score_final': final.score_final, 'confidence_final': final.confidence_final, 'rationale_final': final.rationale_final, 'is_infringement': final.is_infringement}}})
+        except Exception as e:
+            log(f"Failed to append final decision to global_history for case {case_id} at end of run: {e}")
+            raise
         return final
 
-    def reflect_and_summary(self, case_id: Optional[str] = None, expert_outputs: Optional[dict] = None, final_decision: Optional[FinalDecision] = None) -> str:
-        """Judge reflects on the case, stores brief experience in K_j['E_j'], and returns a short summary."""
-        if not self.enable_reflection:
+    def reflect_and_summary(self, case_id: Optional[str] = None, global_history: Optional[List[dict]] = None, final_decision: Optional[FinalDecision] = None) -> str:
+        """Judge reflects on the case using only the full-case `global_history` and the `final_decision`, stores brief experience in K_j['E_j'], and returns a short summary."""
+        if not self.enable_reflection_summary:
             log("Reflection is disabled in the configuration.")
             return ""
-
-        expert_outputs = expert_outputs or {}
-        case_id = case_id or (expert_outputs.get('case_id') if isinstance(expert_outputs, dict) else None)
         prompt = (
-            "You are the Judge. Reflect briefly (2-4 sentences) on what facts, expert findings, and arguments mattered most in reaching (or failing to reach) a decision.\n"
+            "You are the Judge. Reflect briefly (2-4 sentences) on what facts, patterns in the dialogue, and arguments mattered most in reaching (or failing to reach) a decision.\n"
             "Also mention one pattern the court should watch in future cases.\n\n"
-            f"Expert Filtration:\n{expert_outputs.get('filtration','')}\n\n"
-            f"Plaintiff Statement:\n{expert_outputs.get('plaintiff','')}\n\n"
-            f"Defendant Statement:\n{expert_outputs.get('defendant','')}\n\n"
-            f"Final Decision (if any):\n{getattr(final_decision, 'rationale_final', '')}\n"
         )
+        try:
+            if global_history and isinstance(global_history, list):
+                tail = global_history[-24:]
+                prompt += "Recent dialog/events (last few):\n" + json.dumps(tail, ensure_ascii=False, indent=0) + "\n\n"
+        except Exception as e:
+            log(f"Judge reflect_and_summary failed while preparing global_history tail for case {case_id}: {e}")
+            raise
+        try:
+            if final_decision:
+                prompt += f"Final Decision: is_infringement={getattr(final_decision, 'is_infringement', '')}, score={getattr(final_decision, 'score_final', '')}, confidence={getattr(final_decision, 'confidence_final', '')}, rationale={getattr(final_decision, 'rationale_final', '')}\n"
+        except Exception as e:
+            log(f"Judge reflect_and_summary failed while formatting final_decision for case {case_id}: {e}")
+            raise
         try:
             summary = self.agent._chat(prompt).strip()
         except Exception as e:
             log(f"Judge reflect_and_summary failed: {e}")
             summary = ""
-
-        if self.enable_summary:
+        if self.enable_reflection_summary:
             try:
                 self.K_j['E_j'].append({'case_id': case_id or f'case_{len(self.K_j["E_j"]) + 1}', 'summary': summary})
                 if case_id and case_id not in self.K_j['C']:
                     self.K_j['C'].append(case_id)
-            except Exception:
-                pass
+            except Exception as e:
+                log(f"Judge reflect_and_summary failed to store summary in K_j for case {case_id}: {e}")
+                raise
         return summary
 
 
-def batch_run_trials(cfg: Dict[str, Any], judge: JudgeAgent, expert: ExpertAgent, plaintiff: LawyerAgent, defendant: LawyerAgent, human_refs: Optional[list] = None):
+def batch_run_trials(cfg: Dict[str, Any], judge: JudgeAgent, expert: ExpertAgent, plaintiff: LawyerAgent, defendant: LawyerAgent, human_refs: Optional[list] = None, run_dir: Optional[str] = None):
     """
     Batch-run courtroom simulations over the configured test set and save results.
 
@@ -1261,6 +1539,8 @@ def batch_run_trials(cfg: Dict[str, Any], judge: JudgeAgent, expert: ExpertAgent
     with open(test_set_path, 'r', encoding='utf-8') as f:
         test_set = [json.loads(line) for line in f if line.strip()]
 
+    # create Court orchestrator to get per-case atomic saves (allow run_dir override)
+    court = Court(cfg, judge, expert, plaintiff, defendant, run_dir=run_dir)
     detailed_results = []
     final_results = {}
 
@@ -1277,9 +1557,9 @@ def batch_run_trials(cfg: Dict[str, Any], judge: JudgeAgent, expert: ExpertAgent
             log(f"Expert analysis failed for {img_name}: {e}")
             expert_out = {'abstraction': '', 'filtration': '', 'judgment': Judgment(score=0.0, confidence=0.0, rationale=str(e))}
 
-        # Run the full courtroom flow using precomputed expert outputs
+        # Run the full courtroom flow using precomputed expert outputs via Court.run_trial (atomic per-case save)
         try:
-            final = judge.run_trial(gen_img_path, real_img_path, expert, plaintiff, defendant, human_refs=human_refs, expert_outputs=expert_out)
+            final = court.run_trial(gen_img_path, real_img_path, human_refs=human_refs, expert_outputs=expert_out)
         except Exception as e:
             log(f"run_trial failed for {img_name}: {e}")
             final = FinalDecision(score_final=expert_out['judgment'].score, confidence_final=expert_out['judgment'].confidence, rationale_final=f"Error during trial: {e}", is_infringement=expert_out['judgment'].score > cfg.get('gamma', 0.5))
@@ -1308,11 +1588,18 @@ def batch_run_trials(cfg: Dict[str, Any], judge: JudgeAgent, expert: ExpertAgent
         detailed_results.append(detailed)
         final_results[img_name] = 1 if final.is_infringement else 0
 
-    # prepare output directory with timestamp and config summary
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    dir_prefix = f"courtroom-agent_type-{cfg.get('agent_type','NA')}_meta_mode-{cfg.get('meta_mode','NA')}_ablation-{cfg.get('ablation','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
-    out_dir = os.path.join('./outputs', f"{timestamp}_{dir_prefix}")
-    os.makedirs(out_dir, exist_ok=True)
+    # determine out_dir: if run_dir passed from caller (main), use it; otherwise compute here
+    if run_dir:
+        out_dir = run_dir
+    else:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # include dataset name in the run-level output folder
+        dataset_dir = cfg.get('dataset_dir', '.')
+        dataset_name = cfg.get('dataset_name') or os.path.basename(os.path.normpath(dataset_dir)) or 'dataset'
+        dataset_name = dataset_name.replace(os.sep, '_').replace(' ', '_')
+        dir_prefix = f"dataset-{dataset_name}_courtroom-agent_type-{cfg.get('agent_type','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
+        out_dir = os.path.join('./outputs', f"{timestamp}_{dir_prefix}")
+        os.makedirs(out_dir, exist_ok=True)
 
     # write artifacts
     with open(os.path.join(out_dir, 'detailed_results.json'), 'w', encoding='utf-8') as f:
@@ -1371,19 +1658,47 @@ def main():
     plaintiff = LawyerAgent(cfg, role='plaintiff')
     defendant = LawyerAgent(cfg, role='defendant')
     judge = JudgeAgent(cfg)
+    # compute a single run_dir here and pass into subroutines / Court so path is defined once
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    dataset_dir = cfg.get('dataset_dir', '.')
+    dataset_name = cfg.get('dataset_name') or os.path.basename(os.path.normpath(dataset_dir)) or 'dataset'
+    dataset_name = dataset_name.replace(os.sep, '_').replace(' ', '_')
+    agent_type = cfg.get('agent_type', 'NA')
+    # If using a local Qwen-based agent, prefer the provided local path and include the model folder name in run prefix
+    model_suffix = ''
+    if agent_type in ('qwen2.5-vl', 'qwen3-vl-thinking'):
+        qwen_path = cfg.get('qwen_local_path')
+        if qwen_path:
+            model_name = os.path.basename(os.path.normpath(qwen_path))
+            model_name = model_name.replace(os.sep, '_').replace(' ', '_')
+            model_suffix = f"_qwen_model-{model_name}"
+            log(f"Agent type is {agent_type}: will use local Qwen model at {qwen_path} (model name: {model_name})")
+        else:
+            log(f"Agent type is {agent_type} but no 'qwen_local_path' found in config; falling back to cfg settings.")
+    dir_prefix = f"dataset-{dataset_name}_courtroom-agent_type-{agent_type}{model_suffix}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
+    run_dir = os.path.join('./outputs', f"{timestamp}_{dir_prefix}")
+    os.makedirs(run_dir, exist_ok=True)
+    # save a copy of the config used for this run into the run_dir for reproducibility
+    try:
+        shutil.copy(cfg_path, os.path.join(run_dir, os.path.basename(cfg_path)))
+        log(f"Saved config {cfg_path} to run dir: {run_dir}")
+    except Exception as e:
+        log(f"Failed to copy config {cfg_path} to run dir {run_dir}: {e}")
 
     # If test_set_path exists in config, run batch evaluation and save outputs
     if not cfg.get("single_test"):
         log('Running batch courtroom simulations (this may take a while)')
-        out_dir = batch_run_trials(cfg, judge, expert, plaintiff, defendant, human_refs=[])
+        out_dir = batch_run_trials(cfg, judge, expert, plaintiff, defendant, human_refs=[], run_dir=run_dir)
         log(f'Batch outputs are in: {out_dir}')
     else:
         # demo single-run (paths below are placeholders; adjust as needed)
         gen_img_path = cfg.get('demo_gen_path', "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg")
         real_img_path = cfg.get('demo_real_path', "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg")
         log('Starting single courtroom simulation (demo)')
-        import pdb; pdb.set_trace()
-        final = judge.run_trial(gen_img_path, real_img_path, expert, plaintiff, defendant, human_refs=[])
+        # import pdb; pdb.set_trace()
+        # use Court to run single trial and persist artifacts
+        court = Court(cfg, judge, expert, plaintiff, defendant, run_dir=run_dir)
+        final = court.run_trial(gen_img_path, real_img_path, human_refs=[])
         print('\n=== FINAL VERDICT ===')
         print(f'Is infringement: {final.is_infringement}')
         print(f'Score: {final.score_final:.3f}, Confidence: {final.confidence_final:.3f}')
