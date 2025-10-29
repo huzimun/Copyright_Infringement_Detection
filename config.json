@@ -1,16 +1,18 @@
 {
     "gamma": 0.8,
+    "judge_confidence_threshold": 0.0,
     "max_rounds": 3,
-    "qwen_local_path": "/data1/humw/Pretrains/Qwen/Qwen3-VL-8B-Thinking",
+    "qwen_local_path": "/data1/humw/Pretrains/Qwen/Qwen2.5-VL-3B-Instruct",
     "temperature": 0.2,
     "max_tokens": 800,
     "api_key_env": "OPENAI_API_KEY",
-    "agent_type": "qwen3-vl-thinking",
+    "agent_type": "gpt-4o-2024-11-20",
     "device": "cuda:2",
     "dataset_name": "mini-D-Rep",
     "dataset_dir": "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep",
     "test_set_path": "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/mini_Test.jsonl",
     "test_label_path": "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/mini_test_labels.json",
     "enable_reflection_summary": false,
-    "single_test": false
+    "single_test": false,
+    "enable_thinking": false
 }

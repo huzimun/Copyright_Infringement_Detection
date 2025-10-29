@@ -267,11 +267,12 @@ class LLMAdapterAgent(BaseLVLM):
 
         global GLOBAL_QWEN_MODEL, GLOBAL_QWEN_PROCESSOR
 
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             api_key = os.getenv(cfg["api_key_env"])
             if not api_key:
                 raise RuntimeError(f"未找到环境变量 {cfg['api_key_env']}，请设置 OpenAI API key。")
-            self.client = OpenAI(api_key=api_key)
+            self.client = OpenAI(api_key=api_key,
+                                 base_url="https://www.dmxapi.cn/v1/")
             self.model = self.agent_type
         elif self.agent_type == "qwen2.5-vl":
             # 全局只加载一次Qwen模型和processor
@@ -325,7 +326,7 @@ class LLMAdapterAgent(BaseLVLM):
         log(f"Calling _chat with prompt: {prompt[:60]}...")
         mbti_prefix = self.get_mbti_prefix()
         prompt_with_mbti = mbti_prefix + prompt
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             messages = []
             messages.append({"role": "user", "content": prompt_with_mbti})
             response = self.client.chat.completions.create(
@@ -392,7 +393,7 @@ class LLMAdapterAgent(BaseLVLM):
         mbti_prefix = self.get_mbti_prefix()
         # Add in-context examples as user messages
         for gen_img, real_img, score in in_context_examples:
-            if self.agent_type == "gpt-4o":
+            if "gpt-4o" in self.agent_type:
                 with open(gen_img, "rb") as f:
                     img_base64_x = base64.b64encode(f.read()).decode("utf-8")
                 with open(real_img, "rb") as f:
@@ -424,7 +425,7 @@ class LLMAdapterAgent(BaseLVLM):
                 ]
                 messages.append({"role": "user", "content": content})
         # Add the target image pair as the last message
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             with open(image_x, "rb") as f:
                 img_base64_x = base64.b64encode(f.read()).decode("utf-8")
             with open(image_xcr, "rb") as f:
@@ -499,7 +500,7 @@ class LLMAdapterAgent(BaseLVLM):
     # 专用聊天接口：摘要
     def _abstraction_chat(self, image_x, image_xcr, prompt):
         log(f"Calling _abstraction_chat with image_x={image_x}, image_xcr={image_xcr}, prompt={prompt[:40]}...")
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             with open(image_x, "rb") as f:
                 img_base64_x = base64.b64encode(f.read()).decode("utf-8")
             with open(image_xcr, "rb") as f:
@@ -578,7 +579,7 @@ class LLMAdapterAgent(BaseLVLM):
         Returns: string response from the model.
         """
         log(f"Calling _image_chat with image_x={image_x}, image_xcr={image_xcr}, prompt={prompt[:40]}...")
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             with open(image_x, "rb") as f:
                 img_base64_x = base64.b64encode(f.read()).decode("utf-8")
             with open(image_xcr, "rb") as f:
@@ -661,7 +662,7 @@ class LLMAdapterAgent(BaseLVLM):
             其中，zc: 过滤后可能侵权图像的摘要，zccr: 过滤后版权图像的摘要
         """
         input_text = f"Image decompositions: {abstract_z_zcr}\n{prompt}"
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             content = [
                 {"type": "text", "text": input_text}
             ]
@@ -735,7 +736,7 @@ class LLMAdapterAgent(BaseLVLM):
         mbti_prefix = self.get_mbti_prefix()
         # Add in-context examples as user messages
         for gen_img, real_img, score in in_context_examples:
-            if self.agent_type == "gpt-4o":
+            if "gpt-4o" in self.agent_type:
                 with open(gen_img, "rb") as f:
                     img_base64_x = base64.b64encode(f.read()).decode("utf-8")
                 with open(real_img, "rb") as f:
@@ -769,7 +770,7 @@ class LLMAdapterAgent(BaseLVLM):
             else:
                 raise NotImplementedError
         # Add the target image pair as the last message
-        if self.agent_type == "gpt-4o":
+        if "gpt-4o" in self.agent_type:
             with open(image_x, "rb") as f:
                 img_base64_x = base64.b64encode(f.read()).decode("utf-8")
             with open(image_xcr, "rb") as f:
@@ -861,8 +862,14 @@ class LLMAdapterAgent(BaseLVLM):
             score_str, conf_str = head.split(",")[:2]
             score = float(score_str.split(":")[1].strip())
             conf = float(conf_str.split(":")[1].strip())
-        except Exception:
-            score, conf, reason = 0.0, 0.0, out
+        except Exception as e:
+            # Log the parsing failure with contextual information, then re-raise
+            try:
+                log(f"Failed to parse judge comparison output for score/conf/reason: {e}. Raw output (truncated): {str(out)[:1000]}")
+            except Exception:
+                # If logging the raw output fails for any reason, still log the exception
+                log(f"Failed to parse judge comparison output for score/conf/reason: {e}. Also failed to stringify raw output.")
+            raise
         return Judgment(score=score, confidence=conf, rationale=reason.strip())
 
 def log(msg: str):
@@ -893,7 +900,7 @@ class Court:
             dataset_name = cfg.get('dataset_name') or os.path.basename(os.path.normpath(dataset_dir)) or 'dataset'
             # sanitize dataset_name (replace os.sep and spaces)
             dataset_name = dataset_name.replace(os.sep, '_').replace(' ', '_')
-            prefix = f"dataset-{dataset_name}_courtroom-agent_type-{cfg.get('agent_type','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
+            prefix = f"dataset-{dataset_name}_courtroom-agent_type-{cfg.get('agent_type','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}_judge_confidence-{cfg.get('judge_confidence_threshold', 0.75)}"
             self.run_dir = os.path.join('./outputs', f"{self.ts}_{prefix}")
             os.makedirs(self.run_dir, exist_ok=True)
         # ensure run dir exists
@@ -1283,7 +1290,7 @@ class JudgeAgent:
         except Exception as e:
             log(f"Failed to append opening statements to global_history for case {case_id}: {e}")
             raise
-
+        
         # Judge evaluates
         for round_idx in range(1, self.max_rounds + 1):
             log(f"--- Round {round_idx} ---")
@@ -1597,7 +1604,7 @@ def batch_run_trials(cfg: Dict[str, Any], judge: JudgeAgent, expert: ExpertAgent
         dataset_dir = cfg.get('dataset_dir', '.')
         dataset_name = cfg.get('dataset_name') or os.path.basename(os.path.normpath(dataset_dir)) or 'dataset'
         dataset_name = dataset_name.replace(os.sep, '_').replace(' ', '_')
-        dir_prefix = f"dataset-{dataset_name}_courtroom-agent_type-{cfg.get('agent_type','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
+        dir_prefix = f"dataset-{dataset_name}_courtroom-agent_type-{cfg.get('agent_type','NA')}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}_judge_confidence-{cfg.get('judge_confidence_threshold', 0.75)}"
         out_dir = os.path.join('./outputs', f"{timestamp}_{dir_prefix}")
         os.makedirs(out_dir, exist_ok=True)
 
@@ -1645,10 +1652,6 @@ def main():
         cfg = json.load(f)
 
     # Ensure max_rounds exists
-    cfg.setdefault('max_rounds', 3)
-    cfg.setdefault('judge_confidence_threshold', 0.75)
-    cfg.setdefault('gamma', 0.5)
-
     # initialize agents
     log('Initializing agents')
     expert = ExpertAgent(cfg)
@@ -1675,7 +1678,7 @@ def main():
             log(f"Agent type is {agent_type}: will use local Qwen model at {qwen_path} (model name: {model_name})")
         else:
             log(f"Agent type is {agent_type} but no 'qwen_local_path' found in config; falling back to cfg settings.")
-    dir_prefix = f"dataset-{dataset_name}_courtroom-agent_type-{agent_type}{model_suffix}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}"
+    dir_prefix = f"dataset-{dataset_name}_courtroom-agent_type-{agent_type}{model_suffix}_max_rounds-{cfg.get('max_rounds',0)}_gamma-{cfg.get('gamma',0.5)}_judge_confidence-{cfg.get('judge_confidence_threshold', 0.75)}"
     run_dir = os.path.join('./outputs', f"{timestamp}_{dir_prefix}")
     os.makedirs(run_dir, exist_ok=True)
     # save a copy of the config used for this run into the run_dir for reproducibility
@@ -1695,7 +1698,7 @@ def main():
         gen_img_path = cfg.get('demo_gen_path', "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/gen/gen_CAP000008.jpg")
         real_img_path = cfg.get('demo_real_path', "/data1/humw/Codes/Image_Copy_Detection/PDF-Embedding/D-Rep/Test/real/real_CAP000008.jpg")
         log('Starting single courtroom simulation (demo)')
-        # import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
         # use Court to run single trial and persist artifacts
         court = Court(cfg, judge, expert, plaintiff, defendant, run_dir=run_dir)
         final = court.run_trial(gen_img_path, real_img_path, human_refs=[])
