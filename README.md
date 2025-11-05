@@ -95,12 +95,3 @@ python3 courtroom_simulator.py --cfg_path /data1/humw/Codes/Image_Copy_Detection
 2. 输出解析：Judge 要求严格格式，但仍有回退解析。生产化时建议强化 prompt 与解析的鲁棒性（或使用结构化输出 API）。
 3. 性能：本地 Qwen 模型需要足够显存，`GLOBAL_QWEN_MODEL` 在初始化时会被加载一次并复用。
 4. 测试：建议加入 MockAgent（覆盖 `_chat` 等方法）以便单元测试控制流与逻辑，而不依赖真实 LVLM。
-
-## 7. 后续建议（我可以帮你做的事）
-
-- 将这份文档保存为独立文件 `docs/COURTROOM_SIMULATOR.md`；
-- 为 `LLMAdapterAgent` 添加 Mock 子类并编写一个快速测试脚本以在不调用真实模型的情况下验证 `run_trial`、知识库写入与 `batch_run_trials` 输出格式；
-- 实现知识库的磁盘持久化接口（可选 JSON 或 SQLite）。
-
-如果你希望，我可以直接在仓库中创建 `docs/COURTROOM_SIMULATOR.md` 或生成 Mock 测试脚本并运行一次验证。告诉我接下来想要哪一步。
-

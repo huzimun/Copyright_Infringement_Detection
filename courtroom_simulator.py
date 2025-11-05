@@ -1209,7 +1209,6 @@ class JudgeAgent:
                 "OR Action: Question\n"
                 "   Target: [Plaintiff|Defendant|Both]\n"
                 "   Question: [text]"
-                
         ).format(
                 abstraction=expert_outputs['abstraction'],
                 filtration=expert_outputs['filtration'], 
@@ -1231,12 +1230,12 @@ class JudgeAgent:
                 "   Confidence: [0-1]\n"
                 "   Reason: [text]"
             ).format(
-                    abstraction=expert_outputs['abstraction'],
-                    filtration=expert_outputs['filtration'], 
-                    score=getattr(expert_outputs.get('judgment'), 'score', 0.0),
-                    conf=getattr(expert_outputs.get('judgment'), 'confidence', 0.0),
-                    rationale=getattr(expert_outputs.get('judgment'), 'rationale', '')
-                    )
+                abstraction=expert_outputs['abstraction'],
+                filtration=expert_outputs['filtration'], 
+                score=getattr(expert_outputs.get('judgment'), 'score', 0.0),
+                conf=getattr(expert_outputs.get('judgment'), 'confidence', 0.0),
+                rationale=getattr(expert_outputs.get('judgment'), 'rationale', '')
+            )
         elif "layer" in self.cfg.get('ablation') and "expert" not in self.cfg.get('ablation'):
             prompt = (
                 "You are the judge in a copyright infringement case.\n"
@@ -1256,7 +1255,7 @@ class JudgeAgent:
             ).format(
                     plaintiff=plaintiff_stmt,
                     defendant=defendant_stmt
-                    )
+            )
         else:
             prompt = (
                 "You are the judge in a copyright infringement case.\n"
@@ -1273,7 +1272,8 @@ class JudgeAgent:
             out = self.agent._image_chat(image_x, image_xcr, prompt)
         except Exception:
             # fallback to text-only chat if image chat fails
-            out = self.agent._chat(prompt)
+            log("Judge: image chat failed, falling back to text-only chat")
+            raise
         log(f"Judge raw output: {out[:800]}")
         # parsing
         result = {'action': 'undecided', 'raw': out}
@@ -1355,8 +1355,9 @@ class JudgeAgent:
                 rationale = getattr(ej, 'rationale', str(ej.get('rationale', '')) if isinstance(ej, dict) else '')
             except Exception:
                 score, conf, rationale = 0.0, 0.0, ''
-            is_infr = (score >= getattr(self.judge, 'similarity_threshold', self.cfg.get('similarity_threshold', 0.5)))
+            is_infr = score >= self.cfg.get('similarity_threshold')
             final = FinalDecision(score_final=score, confidence_final=conf, rationale_final=rationale, is_infringement=is_infr)
+            return final
         elif ablation == 'expert+judge':
             # Skip lawyers; let the judge base decision directly on expert outputs.
             plaintiff_stmt = ''
@@ -1370,7 +1371,7 @@ class JudgeAgent:
             s = float(result.get('score', 0.0))
             c = float(result.get('confidence', 0.0))
             r = result.get('reason', '')
-            is_infr = (s >= getattr(self.judge, 'similarity_threshold', self.cfg.get('similarity_threshold', 0.5)))
+            is_infr = s >= self.cfg.get('similarity_threshold')
             final = FinalDecision(score_final=s, confidence_final=c, rationale_final=r, is_infringement=is_infr)
             return final
         elif ablation == 'layer+judge':
@@ -1388,7 +1389,7 @@ class JudgeAgent:
             s = float(result.get('score', 0.0))
             c = float(result.get('confidence', 0.0))
             r = result.get('reason', '')
-            is_infr = (s >= getattr(self.judge, 'similarity_threshold', self.cfg.get('similarity_threshold', 0.5)))
+            is_infr = s >=  self.cfg.get('similarity_threshold')
             final = FinalDecision(score_final=s, confidence_final=c, rationale_final=r, is_infringement=is_infr)
             return final
         else:

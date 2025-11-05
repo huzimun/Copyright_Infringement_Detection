@@ -14,5 +14,5 @@
     "enable_reflection_summary": false,
     "single_test": false,
     "enable_thinking": false,
-    "ablation": "judge"
+    "ablation": "expert"
 }
